@@ -145,6 +145,8 @@ jobs:
           TASK_DIR: ${{ needs.gate.outputs.task_dir }}
           LOGIN: ${{ needs.gate.outputs.login }}
         run: |
+          # 同 ci.yml：默认 `bash -e` 会在评测脚本返回 1 时掐断本步，先显式关掉。
+          set +e
           set -uo pipefail
           case "$TASK" in
             E1) extra=(--qa hidden-repo/hidden/E1/hidden_qa.json) ;;

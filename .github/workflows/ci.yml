@@ -95,6 +95,9 @@ jobs:
           TASK_DIR: ${{ steps.sub.outputs.task_dir }}
           LOGIN: ${{ steps.sub.outputs.login }}
         run: |
+          # GitHub 的 run: 默认是 `bash -e`；评测脚本按设计用退出码 1 表示「没过」，
+          # 这里必须显式关掉 errexit，否则 rc 还没记录整步就被掐断（首发就踩了）。
+          set +e
           set -uo pipefail
           uv run "${TASK_DIR}/eval/run.py" --image "sub:${LOGIN}" --mode public > eval.out 2> eval.err
           rc=$?
