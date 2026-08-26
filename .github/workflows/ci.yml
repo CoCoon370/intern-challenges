@@ -106,6 +106,7 @@ jobs:
           echo "--- eval result ---"; tail -n 1 eval.out || true
           exit 0
 
+      # 只写摘要，永远不失败；判定放在下一步，红的时候候选人一眼能看到是「Verdict」。
       - name: Summary
         env:
           RC: ${{ steps.eval.outputs.rc }}
@@ -142,5 +143,14 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
               f.write("\n".join(out) + "\n")
           print("\n".join(out))
-          sys.exit(0 if rc == "0" else 1)
           PY
+
+      - name: Verdict
+        env:
+          RC: ${{ steps.eval.outputs.rc }}
+        run: |
+          if [ "$RC" != "0" ]; then
+            echo "::error::公开集评测未通过（硬违规或得分 < 0.5）。分数与逐题结果见上方 Summary。"
+            exit 1
+          fi
+          echo "✅ 公开集评测通过"
