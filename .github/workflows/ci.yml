@@ -1,0 +1,143 @@
+# 候选人 PR 的公开评测。
+#
+# 触发：pull_request（fork 来的 PR 也触发；这类 run 没有 secrets、token 只读，
+# 所以这里只做「校验目录 + 构建镜像 + 跑公开集」，不碰任何私密内容。
+# 隐藏集与 Claude review 在 eval-on-demand.yml，由面试官评论 /eval 触发。
+#
+# check 名固定为 `submission`，main 的分支保护引用的就是它。
+name: submission
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: submission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  submission:
+    name: submission
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # 只允许改 submissions/<task>/<login>/ 这一个目录，且 login 必须等于 PR 作者。
+      # 文件清单走 API 拿（--paginate，别让 100 个文件以上的 PR 被静默截断）。
+      - name: Resolve submission directory
+        id: sub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
+          if [ -z "$files" ]; then
+            echo "::error::PR 没有任何文件改动"; exit 1
+          fi
+          bad=$(printf '%s\n' "$files" | grep -Ev '^submissions/(E1|E2|E3)/[a-z0-9][a-z0-9-]*/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::以下文件不在 submissions/<E1|E2|E3>/<github-login>/ 下（login 需全小写）："
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          dirs=$(printf '%s\n' "$files" | sed -E 's#^(submissions/(E1|E2|E3)/[a-z0-9][a-z0-9-]*)/.*#\1#' | sort -u)
+          n=$(printf '%s\n' "$dirs" | wc -l | tr -d ' ')
+          if [ "$n" != "1" ]; then
+            echo "::error::一个 PR 只能改一个提交目录，现在改了 ${n} 个："
+            printf '%s\n' "$dirs"
+            exit 1
+          fi
+          dir="$dirs"
+          task=$(echo "$dir" | cut -d/ -f2)
+          login=$(echo "$dir" | cut -d/ -f3)
+          author_lc=$(echo "$AUTHOR" | tr '[:upper:]' '[:lower:]')
+          if [ "$login" != "$author_lc" ]; then
+            echo "::error::目录名 '${login}' 与 PR 作者 '${author_lc}' 不一致"; exit 1
+          fi
+          for f in Dockerfile README.md; do
+            if [ ! -f "$dir/$f" ]; then
+              echo "::error::缺少 ${dir}/${f}"; exit 1
+            fi
+          done
+          case "$task" in
+            E1) task_dir=tasks/E1-mini-brain ;;
+            E2) task_dir=tasks/E2-workflow-automation ;;
+            E3) task_dir=tasks/E3-wechat-autoreply ;;
+          esac
+          {
+            echo "dir=$dir"
+            echo "task=$task"
+            echo "task_dir=$task_dir"
+            echo "login=$login"
+          } >> "$GITHUB_OUTPUT"
+          echo "✅ ${dir} (${task})"
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build candidate image
+        env:
+          DIR: ${{ steps.sub.outputs.dir }}
+          LOGIN: ${{ steps.sub.outputs.login }}
+        run: |
+          set -euo pipefail
+          timeout 600 docker build -t "sub:${LOGIN}" "$DIR"
+
+      # 评测脚本的退出码就是结论；输出落文件再读，不接管道（pipefail 之外的保险）。
+      - name: Public evaluation
+        id: eval
+        env:
+          TASK_DIR: ${{ steps.sub.outputs.task_dir }}
+          LOGIN: ${{ steps.sub.outputs.login }}
+        run: |
+          set -uo pipefail
+          uv run "${TASK_DIR}/eval/run.py" --image "sub:${LOGIN}" --mode public > eval.out 2> eval.err
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "--- eval stderr (tail) ---"; tail -n 60 eval.err || true
+          echo "--- eval result ---"; tail -n 1 eval.out || true
+          exit 0
+
+      - name: Summary
+        env:
+          RC: ${{ steps.eval.outputs.rc }}
+          TASK: ${{ steps.sub.outputs.task }}
+          LOGIN: ${{ steps.sub.outputs.login }}
+        run: |
+          set -euo pipefail
+          python3 - "$RC" "$TASK" "$LOGIN" <<'PY'
+          import json, os, sys
+          rc, task, login = sys.argv[1], sys.argv[2], sys.argv[3]
+          last = ""
+          try:
+              lines = [l for l in open("eval.out", encoding="utf-8").read().splitlines() if l.strip()]
+              last = lines[-1] if lines else ""
+              res = json.loads(last)
+          except Exception as e:
+              res = None
+          out = [f"## 公开集评测 · {task} · `{login}`", ""]
+          if not res:
+              out += ["❌ 评测脚本没有输出结果 JSON（容器起不来、或脚本异常）。看上一步的 stderr。", ""]
+          else:
+              out += [
+                  f"| 分数 | 通过 | 硬违规 |", "|---|---|---|",
+                  f"| **{res.get('score', 0):.2f}** | {res.get('passed', '?')}/{res.get('total', '?')} | {', '.join(res.get('hard_violations') or []) or '无'} |",
+                  "",
+              ]
+              details = res.get("details") or []
+              if details:
+                  out += ["| 用例 | 结果 | 说明 |", "|---|---|---|"]
+                  for d in details:
+                      out.append(f"| `{d.get('id','')}` | {'✅' if d.get('ok') else '❌'} | {d.get('why','')} |")
+                  out.append("")
+          out.append("隐藏集评测由面试官评论 `/eval` 触发。")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("\n".join(out) + "\n")
+          print("\n".join(out))
+          sys.exit(0 if rc == "0" else 1)
+          PY

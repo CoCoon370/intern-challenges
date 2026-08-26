@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微信</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="me">
+        <div class="avatar me-avatar">顾</div>
+        <div class="me-name">云栖家居·小顾</div>
+        <div class="conn-dot" title="连接状态"></div>
+      </div>
+      <div class="search"><input type="text" placeholder="搜索" readonly></div>
+      <div class="chat-list"></div>
+    </aside>
+
+    <main class="chat-panel">
+      <div class="empty-hint">
+        <div class="empty-logo">微信</div>
+        <div>选择左侧会话开始聊天</div>
+      </div>
+      <div class="chat-main" hidden>
+        <header class="chat-header"><span class="chat-title"></span></header>
+        <div class="msg-list"></div>
+        <footer class="composer">
+          <div class="toolbar">
+            <span class="tool" title="表情">☺</span>
+            <span class="tool" title="文件">🗂</span>
+            <span class="tool" title="截图">✂</span>
+          </div>
+          <textarea class="editor" rows="3" spellcheck="false"></textarea>
+          <div class="composer-actions">
+            <span class="hint">Enter 发送 · Shift+Enter 换行</span>
+            <button class="send-btn" type="button">发送</button>
+          </div>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-root"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

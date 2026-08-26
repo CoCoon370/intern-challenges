@@ -1,0 +1,22 @@
+[
+  {"id": "q01", "query": "衣柜柜体默认用什么板材，环保等级是什么", "expect": {"type": "passage", "paths": ["products/wardrobe.md"], "must_contain_any": ["ENF", "E0"]}},
+  {"id": "q02", "query": "橱柜的水槽柜默认用什么板材", "expect": {"type": "passage", "paths": ["products/kitchen-cabinet.md"], "must_contain_any": ["欧松板"]}},
+  {"id": "q03", "query": "榻榻米底箱的承重设计值是多少", "expect": {"type": "passage", "paths": ["products/tatami.md"], "must_contain_any": ["300"]}},
+  {"id": "q04", "query": "标配铰链是哪个品牌", "expect": {"type": "passage", "paths": ["products/hardware.md"], "must_contain_any": ["铂锐"]}},
+  {"id": "q05", "query": "衣柜按投影面积报价是多少钱一平米", "expect": {"type": "passage", "paths": ["pricing/wardrobe-pricing.md"], "must_contain_any": ["880"]}},
+  {"id": "q06", "query": "橱柜地柜的延米单价是多少钱", "expect": {"type": "passage", "paths": ["pricing/kitchen-pricing.md"], "must_contain_any": ["1,680", "1680"]}},
+  {"id": "q07", "query": "云栖 20 套餐多少钱，包含多少投影面积", "expect": {"type": "passage", "paths": ["pricing/whole-house-package.md"], "must_contain_any": ["19,800", "19800"]}},
+  {"id": "q08", "query": "金秋季活动满多少减多少", "expect": {"type": "passage", "paths": ["pricing/promotions.md"], "must_contain_any": ["2,000", "2000"]}},
+  {"id": "q09", "query": "量房要在客户预约后多久内上门", "expect": {"type": "passage", "paths": ["sop/measuring.md"], "must_contain_any": ["48"]}},
+  {"id": "q10", "query": "设计方案免费修改几次，之后每次收多少设计费", "expect": {"type": "passage", "paths": ["sop/design.md"], "must_contain_any": ["300"]}},
+  {"id": "q11", "query": "签合同时首付比例是多少", "expect": {"type": "passage", "paths": ["sop/ordering.md"], "must_contain_any": ["60%"]}},
+  {"id": "q12", "query": "板材质保期是几年", "expect": {"type": "passage", "paths": ["sop/aftersales.md", "faq/warranty.md"], "must_contain_any": ["10 年", "10年"]}},
+  {"id": "q13", "query": "客户交了定金，出方案后还能退吗", "expect": {"type": "passage", "paths": ["faq/customer.md"], "must_contain_any": ["购物金"]}},
+  {"id": "q14", "query": "客户自己拆装过的柜子还在质保范围吗", "expect": {"type": "passage", "paths": ["faq/warranty.md", "faq/customer.md"], "must_contain_any": ["终止", "不算"]}},
+  {"id": "q15", "query": "为什么不做纯实木家具", "expect": {"type": "passage", "paths": ["decisions/no-solid-wood.md"], "must_contain_any": ["纯实木"]}},
+  {"id": "q16", "query": "为什么安装不用第三方而是自建安装队", "expect": {"type": "passage", "paths": ["decisions/in-house-install.md"], "must_contain_any": ["第三方", "自有"]}},
+  {"id": "q17", "query": "CRM 里新线索多久没联系会提醒店长", "expect": {"type": "passage", "paths": ["ops/crm-fields.md"], "must_contain_any": ["24"]}},
+  {"id": "q18", "query": "订单号的格式是什么", "expect": {"type": "passage", "paths": ["ops/order-system.md"], "must_contain_any": ["YQ"]}},
+  {"id": "q19", "query": "今天仓库还有多少张欧松板", "expect": {"type": "live"}},
+  {"id": "q20", "query": "本月到现在一共新增了多少条线索", "expect": {"type": "live"}}
+]

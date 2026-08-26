@@ -1,0 +1,282 @@
+# 面试官在候选人 PR 上评论 `/eval` 触发：
+#   1. hidden-eval   —— 用私有仓 upioai/intern-review 里的隐藏集评测，只把汇总分数评论回 PR
+#   2. claude-review —— 按 review/RUBRIC.md 做一轮自动 review
+#
+# 为什么不用 pull_request 事件：fork 来的 PR 拿不到 secrets（deploy key / OAuth token），
+# 而 issue_comment 跑在本仓上下文里，有 secrets。代价是要靠 author_association 把触发者
+# 限制在 org 成员，候选人自己评论 /eval 不会触发。
+#
+# 安全边界：候选人的容器只通过 `docker run` 启动，不传任何 -e 秘密；隐藏用例文件只被
+# 评测 driver 读取，不挂进容器。Claude review 不执行候选人代码，只读 diff 和文件。
+name: eval-on-demand
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: eval-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: gate
+    if: >-
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/eval') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      pr: ${{ github.event.issue.number }}
+      dir: ${{ steps.pr.outputs.dir }}
+      task: ${{ steps.pr.outputs.task }}
+      task_dir: ${{ steps.pr.outputs.task_dir }}
+      login: ${{ steps.pr.outputs.login }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Acknowledge (👀)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content=eyes >/dev/null
+
+      - name: Resolve PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          head_sha=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq .head.sha)
+          author=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq .user.login | tr '[:upper:]' '[:lower:]')
+          files=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --paginate --jq '.[].filename')
+          # 与 ci.yml 同一套校验，这里必须独立再做一遍：本 workflow 有 secrets，
+          # 不能信任「CI 绿了」——CI 绿是另一条 run 的结论，PR 之后还能再 push。
+          bad=$(printf '%s\n' "$files" | grep -Ev '^submissions/(E1|E2|E3)/[a-z0-9][a-z0-9-]*/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::PR #${PR} 改了提交目录之外的文件，拒绝评测："
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          dirs=$(printf '%s\n' "$files" \
+                 | sed -E 's#^(submissions/(E1|E2|E3)/[a-z0-9][a-z0-9-]*)/.*#\1#' | sort -u)
+          n=$(printf '%s\n' "$dirs" | grep -c . || true)
+          if [ "$n" != "1" ]; then
+            echo "::error::PR #${PR} 的改动不在唯一一个 submissions/<task>/<login>/ 下（找到 ${n} 个）"
+            exit 1
+          fi
+          task=$(echo "$dirs" | cut -d/ -f2)
+          login=$(echo "$dirs" | cut -d/ -f3)
+          if [ "$login" != "$author" ]; then
+            echo "::error::目录 login '${login}' 与 PR 作者 '${author}' 不一致"; exit 1
+          fi
+          case "$task" in
+            E1) task_dir=tasks/E1-mini-brain ;;
+            E2) task_dir=tasks/E2-workflow-automation ;;
+            E3) task_dir=tasks/E3-wechat-autoreply ;;
+          esac
+          {
+            echo "dir=$dirs"; echo "task=$task"; echo "task_dir=$task_dir"
+            echo "login=$login"; echo "head_sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "PR #${PR} → ${dirs} @ ${head_sha}"
+
+  hidden-eval:
+    name: hidden-eval
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # 评测脚本 / mock / 规则一律取自 main（可信）。只把候选人的 submissions/<dir> 从 PR head
+      # 拿进来——否则候选人改一行 tasks/*/eval/run.py 就能把隐藏集打印到公开日志里。
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Bring in candidate submission from PR head
+        env:
+          PR: ${{ needs.gate.outputs.pr }}
+          DIR: ${{ needs.gate.outputs.dir }}
+          HEAD: ${{ needs.gate.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "refs/pull/${PR}/head:refs/remotes/pr/head"
+          got=$(git rev-parse refs/remotes/pr/head)
+          if [ "$got" != "$HEAD" ]; then
+            echo "::error::PR head 在 gate 之后变了（${HEAD} → ${got}），重新评论 /eval"; exit 1
+          fi
+          rm -rf "$DIR"
+          git checkout refs/remotes/pr/head -- "$DIR"
+          echo "submission from ${got}:"; find "$DIR" -type f | head -50
+
+      # 隐藏集：私有仓只读 deploy key。persist-credentials=false，避免 key 留在 git config 里
+      - uses: actions/checkout@v4
+        with:
+          repository: upioai/intern-review
+          ssh-key: ${{ secrets.REVIEW_DEPLOY_KEY }}
+          path: hidden-repo
+          persist-credentials: false
+          sparse-checkout: |
+            hidden
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build candidate image
+        env:
+          DIR: ${{ needs.gate.outputs.dir }}
+          LOGIN: ${{ needs.gate.outputs.login }}
+        run: |
+          set -euo pipefail
+          timeout 600 docker build -t "sub:${LOGIN}" "$DIR"
+
+      - name: Hidden evaluation
+        id: eval
+        env:
+          TASK: ${{ needs.gate.outputs.task }}
+          TASK_DIR: ${{ needs.gate.outputs.task_dir }}
+          LOGIN: ${{ needs.gate.outputs.login }}
+        run: |
+          set -uo pipefail
+          case "$TASK" in
+            E1) extra=(--qa hidden-repo/hidden/E1/hidden_qa.json) ;;
+            E2) extra=(--scenario hidden-repo/hidden/E2/scenarios.json) ;;
+            E3) extra=(--scenario hidden-repo/hidden/E3/scenario.json) ;;
+          esac
+          # hidden 模式下评测脚本只输出用例 id 与通过与否，不输出题面；这里也不打印 stderr
+          # （公开仓的 run 日志所有人可见）。
+          uv run "${TASK_DIR}/eval/run.py" --image "sub:${LOGIN}" --mode hidden "${extra[@]}" > eval.out 2> eval.err
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "eval exit code: $rc"
+          rm -rf hidden-repo
+          exit 0
+
+      - name: Post summary comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.gate.outputs.pr }}
+          TASK: ${{ needs.gate.outputs.task }}
+          LOGIN: ${{ needs.gate.outputs.login }}
+          HEAD: ${{ needs.gate.outputs.head_sha }}
+          RC: ${{ steps.eval.outputs.rc }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > comment.md
+          import json, os
+          rc = os.environ["RC"]; task = os.environ["TASK"]; login = os.environ["LOGIN"]; head = os.environ["HEAD"][:7]
+          run = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          res = None
+          try:
+              lines = [l for l in open("eval.out", encoding="utf-8").read().splitlines() if l.strip()]
+              res = json.loads(lines[-1]) if lines else None
+          except Exception:
+              res = None
+          out = [f"### 隐藏集评测 · {task} · `{login}` @ `{head}`", ""]
+          if not res:
+              out += ["❌ 评测没有产出结果（容器起不来或脚本异常）。", f"[run 日志]({run})"]
+          else:
+              hv = res.get("hard_violations") or []
+              out += ["| 分数 | 通过 | 硬违规 |", "|---|---|---|",
+                      f"| **{res.get('score', 0):.2f}** | {res.get('passed','?')}/{res.get('total','?')} | {', '.join(hv) or '无'} |", ""]
+              det = res.get("details") or []
+              if det:
+                  failed = [d.get("id", "") for d in det if not d.get("ok")]
+                  out.append(f"未通过用例：{', '.join('`'+x+'`' for x in failed) if failed else '无'}")
+              out += ["", f"退出码 {rc} · [run]({run}) · 隐藏用例内容不公开，有疑问在 PR 里问。"]
+          print("\n".join(out))
+          PY
+          gh pr comment "$PR" --body-file comment.md
+
+  claude-review:
+    name: claude-review
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # 没配 token 时整段跳过、不报错（隐藏评测不受影响）。
+      - name: Check CLAUDE_CODE_OAUTH_TOKEN presence
+        id: key
+        env:
+          KEY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN 未配置，跳过 Claude review"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.skip != 'true'
+        with:
+          ref: refs/pull/${{ needs.gate.outputs.pr }}/head
+          fetch-depth: 1
+
+      # pin 不要升（兄弟仓 2026-07-28 实测：dependabot 把它 bump 到 44423bde 后 review 全线空跑、
+      # workflow 仍报 success）。--allowedTools 是「发得出评论」的必要条件；Read/Grep/Glob 让它
+      # 能真的打开提交目录里的文件（action 不会自动补这三个）。
+      - uses: anthropics/claude-code-action@0cb4f3e5e764d2e00407d29b6bf0aa9df0976d88 # v1
+        if: steps.key.outputs.skip != 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --model claude-sonnet-4-6 --max-turns 40
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+          prompt: |
+            你在评审一位实习生候选人提交的实战题 PR #${{ needs.gate.outputs.pr }}。
+            题号 ${{ needs.gate.outputs.task }}，提交目录 `${{ needs.gate.outputs.dir }}/`。
+
+            先读三样东西，其它一律不读：
+            1. `review/RUBRIC.md`（评分标准）
+            2. `${{ needs.gate.outputs.task_dir }}/README.md`（题面与接口）
+            3. `${{ needs.gate.outputs.dir }}/` 下的全部文件（用 Glob/Read）
+
+            diff 用带号的命令取：`gh pr diff ${{ needs.gate.outputs.pr }}`。
+            不要不带号运行 gh pr diff / gh pr view，不要看别的 PR。
+
+            评审重点（按 rubric 的五个维度，但你只对前三个给意见；「沟通与过程」「迭代响应」由面试官看）：
+            - 验收：接口是否严格符合题面（子命令 / 端口 / 环境变量 / JSON 字段）；README 里「怎么跑」能不能一条命令跑起来
+            - 解决问题：题面说「素材不保证干净」，候选人有没有发现并处理题面没明说的问题；README「遇到的问题与取舍」是否具体、是否与代码一致（说处理了但代码里没有 = 扣分）
+            - 工程质量：结构、错误处理、日志、测试、Dockerfile 是否合理；有没有硬编码凭据
+            你没有运行过代码，不要假装跑过。看到的问题指到文件与行。
+
+            具体问题用 `mcp__github_inline_comment__create_inline_comment` 贴到对应行（最多 8 条，只挑高信号的）。
+            最后**必须**用 `gh pr comment ${{ needs.gate.outputs.pr }} --body "..."` 发一条总结，即使没发现问题也要发。总结格式：
+            1. 一段话：这份提交整体做到了什么程度
+            2. 表格：验收 / 解决问题 / 工程质量 三行，每行「建议分（0–5）| 证据（文件:行）」
+            3. 「走读时值得问的 3 个问题」——针对这份代码的具体决定，不要泛泛
+            4. 「README 与代码不一致的地方」（没有就写「无」）
+            用中文。语气客观，不夸不贬。
+
+      # 空跑断言：run 开始之后 PR 上没有任何 claude[bot] 评论就标红——绿勾 + 零评论 = review 形同虚设。
+      - name: Assert the review actually posted something
+        if: steps.key.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.gate.outputs.pr }}
+          STARTED: ${{ steps.key.outputs.started_at }}
+        run: |
+          set -euo pipefail
+          count_since() {
+            gh api "$1" --paginate \
+              --jq ".[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${STARTED}\") | .id" \
+              | wc -l | tr -d ' '
+          }
+          top=$(count_since "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments")
+          inline=$(count_since "repos/${GITHUB_REPOSITORY}/pulls/${PR}/comments")
+          echo "since ${STARTED} — top-level: ${top}, inline: ${inline}"
+          if [ "$((top + inline))" -eq 0 ]; then
+            echo "::error::claude-review 空跑：本次 run 在 PR #${PR} 上没有产生任何评论。排查：① action pin 被改 ② --allowedTools 被删 ③ token 过期 ④ prompt 里 PR 号丢失"
+            exit 1
+          fi
+          echo "✅ review 有产出"

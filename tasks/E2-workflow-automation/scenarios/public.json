@@ -1,0 +1,11 @@
+{
+  "orders": [
+    {"order_id": "ord-1001", "behavior": "normal", "send_times": 1},
+    {"order_id": "ord-1002", "behavior": "normal", "send_times": 2},
+    {"order_id": "ord-1003", "behavior": "cold_start"},
+    {"order_id": "ord-1004", "behavior": "transient_500", "n": 2, "send_at_offset_sec": 1},
+    {"order_id": "ord-1005", "behavior": "permanent_fail", "send_at_offset_sec": 2},
+    {"order_id": "ord-1006", "behavior": "hang", "send_at_offset_sec": 3}
+  ],
+  "deadline_sec": 120
+}

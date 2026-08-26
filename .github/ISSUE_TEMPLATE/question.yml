@@ -1,0 +1,30 @@
+name: 提问
+description: 题目、mock、评测脚本相关的问题
+title: "[问题] "
+labels: ["question"]
+body:
+  - type: dropdown
+    id: task
+    attributes:
+      label: 题号
+      options:
+        - E1 迷你企业大脑
+        - E2 工作流自动化
+        - E3 微信消息自动回复
+        - 通用
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 问题
+      description: 你想知道什么
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: 已经试过什么
+      description: 你已经查过 / 试过的东西，以及结果。带上命令和输出。
+    validations:
+      required: true
