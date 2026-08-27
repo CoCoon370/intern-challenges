@@ -4,14 +4,15 @@
 
 本方案使用 Playwright 操作仿微信页面，通过离线规则、最近会话上下文和轻量文本相似度完成自动回复。核心路径不需要外网、LLM key 或第三方账号。
 
-当前本机没有 Docker Desktop，因此已经完成：
+当前本机没有 Docker Desktop。验证情况如下：
 
 - 20 项核心分类、上下文、客户交接与安全单元测试；
 - 压缩 Demo 剧本的无 Docker 端到端测试；
 - 官方 `scenarios/public.json` 完整时序的无 Docker 端到端测试；
-- 两轮测试均使用官方 `eval/rules.py` 判定，R1-R6 得分为 1.0。
+- 无 Docker 回归均使用官方 `eval/rules.py` 判定，R1-R6 得分为 1.0；
+- GitHub CI 已在 Linux x86_64 上成功构建 Docker 镜像，正式公开评测为 1.00、6/6 通过、无硬违规。
 
-尚未完成：Docker 镜像构建与 Linux 容器网络验证。提交前必须补跑官方 Docker 评测。
+本机未执行本地 Docker 评测；容器构建、Linux 网络和公开集运行已经由本 PR 的 GitHub CI 验证。
 
 ## 怎么跑
 
@@ -27,27 +28,7 @@ docker run --rm --network host \
 
 ## 设计
 
-```text
-Playwright 页面驱动（bot.py）
-    ├─ 扫描全部会话，兼顾“当前会话无红点”
-    ├─ 关闭叠加弹窗
-    ├─ 读取客户消息与最近上下文
-    ├─ 调用离线决策模块（core.py）
-    ├─ 发送前执行报价和内部信息安全检查
-    ├─ 页面确认发送成功后才记为已处理
-    ├─ 写入 decisions.jsonl
-    └─ 累积客户意向到 customer_notes.json
-
-离线决策模块（core.py）
-    ├─ 明确转人工硬规则
-    ├─ 高精度愤怒与辱骂升级
-    ├─ 五类主意图：price / measuring / aftersales / chat / handoff
-    ├─ 细分主题：门店、环保、产品范围、工期、案例等
-    ├─ 最近微信上下文
-    └─ E1 对客文件提炼的安全知识卡片
-```
-
-模块之间只通过 `IntentResult` 协作：浏览器模块不负责理解业务，分类模块不负责点击页面，回复模块不负责维护浏览器状态。这样任何一块出问题都能单独测试和替换。
+`bot.py` 只负责用 Playwright 扫描会话、关闭弹窗、读取和发送消息；`core.py` 只负责意图、情绪、上下文和回复决策；`customer_notes.py` 只维护客户需求摘要。模块通过 `IntentResult` 协作，发送成功后才记录消息，并把每次决策写入 `/out`，便于独立测试和替换。
 
 ## 遇到的问题与取舍
 
@@ -160,14 +141,14 @@ python -m venv .venv
   -v
 ```
 
-## Docker运行（待安装Docker后验证）
+## Docker运行（GitHub CI 已验证）
 
 ```bash
 docker build -t my-e3 submissions/E3/cocoon370
 uv run tasks/E3-wechat-autoreply/eval/run.py --image my-e3 --mode public
 ```
 
-Dockerfile 使用与 Python 包完全一致的 Playwright `1.62.0` 版本，避免运行时重新下载浏览器。
+Dockerfile 使用与 Python 包完全一致的 Playwright `1.62.0` 版本，避免运行时重新下载浏览器。GitHub CI 已完成构建并跑通公开评测；本机因未安装 Docker Desktop，没有重复执行该步骤。
 
 ## 决策日志
 
@@ -188,7 +169,7 @@ Dockerfile 使用与 Python 包完全一致的 Playwright `1.62.0` 版本，避�
 - 没有接入真实的人工客服工作台或通知系统；当前 `handoff` 会写入 `decisions.jsonl` 并停止该会话的自动回复。生产环境还需要下游系统读取这条记录、通知并分配给真人客服。
 - 没有直接修改仿微信页面中的客户备注，因为题目页面没有提供该功能；当前生成独立客户交接表。
 - 没有自动承诺报价、折扣、具体换板结果和无法确认的门店地址。
-- 没有在缺少Docker的情况下声称容器已经验证。
+- 没有在本机重复执行 Docker 评测；容器验证依据本 PR 已通过的 GitHub CI。
 
 ## 用了哪些 AI 工具
 
