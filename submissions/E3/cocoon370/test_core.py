@@ -63,7 +63,7 @@ class CoreTests(unittest.TestCase):
         price = classify_intent("一个3米衣柜，先给个大概价格让我心里有数")
         second_reply = build_reply(price, "一个3米衣柜，先给个大概价格让我心里有数")
         self.assertIn("不能直接给您报价", first_reply)
-        self.assertIn("房子所在区域和准备做哪些柜子", first_reply)
+        self.assertIn("想了解什么产品或空间", first_reply)
         self.assertIn("即使有尺寸，这边也不能直接报价", second_reply)
         self.assertIn("近期哪天方便量房", second_reply)
         self.assertNotEqual(first_reply, second_reply)
@@ -71,7 +71,7 @@ class CoreTests(unittest.TestCase):
         whole_home_text = "我家也是三房，全屋做下来大概要多少钱呀"
         whole_home_reply = build_reply(classify_intent(whole_home_text), whole_home_text)
         self.assertIn("不能直接给出全屋报价", whole_home_reply)
-        self.assertIn("房子所在区域、准备做哪些柜子和目前的装修阶段", whole_home_reply)
+        self.assertIn("想规划哪些产品或空间", whole_home_reply)
 
         measuring = classify_intent("这周六上午可以不", history=("我想预约量房",))
         measuring_reply = build_reply(measuring, "这周六上午可以不")
@@ -124,7 +124,16 @@ class CoreTests(unittest.TestCase):
         result = classify_intent("行吧，我路过在来看看😄", history=history)
         reply = build_reply(result, "行吧，我路过在来看看😄", history=history)
         self.assertEqual(result.topic, "store_visit")
-        self.assertIn("主要想看衣柜、全屋方案", reply)
+        self.assertIn("主要想了解哪类产品或空间", reply)
+
+    def test_soft_furnishing_inquiry_is_not_treated_as_cabinet_quote(self) -> None:
+        for text in ("你们沙发多少钱", "想问一下餐桌怎么卖", "可以配窗帘和软装家具吗"):
+            result = classify_intent(text)
+            reply = build_reply(result, text)
+            self.assertEqual(result.topic, "soft_furnishing")
+            self.assertIn("不能直接报价", reply)
+            self.assertIn("确认门店是否能够提供", reply)
+            self.assertNotIn("安排量房", reply)
 
     def test_tone_is_consistent_and_apology_is_contextual(self) -> None:
         # 所有固定话术都使用同一套专业、温和表达，不混入口头语气词。

@@ -18,6 +18,7 @@ TOPIC_LABELS = {
     "price": "询价",
     "measuring": "预约量房",
     "aftersales": "售后",
+    "soft_furnishing": "成品家具/软装咨询",
     "explicit_handoff": "要求人工",
     "emotion_escalation": "情绪升级",
     "store_visit": "到店咨询",
